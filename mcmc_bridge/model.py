@@ -55,8 +55,14 @@ def array2point(apoint, model=None, vars=None):
     return bij.rmap(apoint)
 
 
+def get_nwalkers(sampler):
+    try:
+        return sampler.nwalkers
+    except AttributeError:
+        return sampler.k
+
 def export_trace(sampler):
-    bar = tqdm(total=sampler.chain.shape[1]*sampler.nwalkers)
+    bar = tqdm(total=sampler.chain.shape[1] * get_nwalkers(sampler))
     traces = []
     for i, chain in enumerate(sampler.chain):
         trace = NDArray(name=str(i), model=sampler.model)
@@ -70,7 +76,7 @@ def export_trace(sampler):
 
 
 def get_start_point(sampler, init='advi', n_init=500000, progressbar=True, **kwargs):
-    start, _ = pm.init_nuts(init=init, chains=sampler.nwalkers, n_init=n_init, model=sampler.model, progressbar=progressbar, **kwargs)
+    start, _ = pm.init_nuts(init=init, chains=get_nwalkers(sampler), n_init=n_init, model=sampler.model, progressbar=progressbar, **kwargs)
     return np.asarray([point2array(s, sampler.model, sampler.model.vars) for s in start])
 
 

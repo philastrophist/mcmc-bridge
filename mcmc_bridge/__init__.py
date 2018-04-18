@@ -1,1 +1,1 @@
-from .model import export_to_emcee, get_start_point, export_trace
+from .model import export_to_emcee, get_start_point

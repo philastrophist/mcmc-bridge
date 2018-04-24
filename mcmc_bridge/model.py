@@ -22,7 +22,8 @@ def get_unfitted_parameters(sampler, output_vars, model=None):
         return results
 
 
-def get_scalar_loglikelihood_function(model, vars=None):
+def get_scalar_loglikelihood_function(model, vars=None, nans='-inf'):
+    assert nans == '-inf' or nans == 'raise', "nans must be either 'raise' or '-inf'"
     model = pm.modelcontext(model)
     if vars is None:
         vars = model.vars
@@ -36,7 +37,11 @@ def get_scalar_loglikelihood_function(model, vars=None):
     supplementary_fn = model.fastfn(unobserved)
 
     def _lnpost(theta):
-        return f(theta), supplementary_fn(array2point(theta)) 
+        v = f(theta)
+        supplementary = supplementary_fn(array2point(theta))
+        if nans == '-inf' and np.isnan(v):
+            return -np.inf, supplementary
+        return v, supplementary
 
     return _lnpost, [u.name for u in unobserved]
 
@@ -45,7 +50,7 @@ def export_to_emcee(model=None, nwalker_multiple=2, **kwargs):
     import emcee
     model = pm.modelcontext(model)
     lnpost, unobserved_varnames = get_scalar_loglikelihood_function(model)
-    dim = sum(var.dsize for var in model.free_RVs)
+    dim = sum(var.dsize for var in model.vars)
     sampler = emcee.EnsembleSampler(nwalker_multiple*dim, dim, lnpost, **kwargs)
     sampler.model = model
     sampler.unobserved_varnames = unobserved_varnames
@@ -86,7 +91,7 @@ def get_nwalkers(sampler):
 
 
 def get_start_point(sampler, init='advi', n_init=500000, progressbar=True, **kwargs):
-    start, _ = pm.init_nuts(init=init, chains=get_nwalkers(sampler), n_init=n_init, model=sampler.model, progressbar=progressbar, **kwargs)
+    start, _ = pm.init_nuts(init, get_nwalkers(sampler), n_init=n_init, model=sampler.model, progressbar=progressbar, **kwargs)
     return np.asarray([point2array(s, sampler.model, sampler.model.vars) for s in start])
 
 

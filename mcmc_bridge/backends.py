@@ -13,12 +13,11 @@ class Indexer(object):
         self.unfitted_chain = self.walker_trace.emcee_trace_obj.unfitted_chain
         self.ordering = self.walker_trace.emcee_trace_obj.sampler.ordering
 
-
     def __getitem__(self, varname):
         try:
             varmap = self.ordering[varname]
             samples = self.raw_samples[self.chain, :, varmap.slc]
-            return samples.reshape(samples.shape[:1]+varmap.shp).astype(varmap.dtyp).T
+            return samples.reshape(samples.shape[:1]+varmap.shp).astype(varmap.dtyp)
         except KeyError:
             return self.unfitted_chain[varname][self.walker_trace.chain]
 
@@ -60,7 +59,7 @@ class EmceeWalkerTrace(NDArray):
 
 def unpack_param_blobs(sampler):
     params = {n: None for n in sampler.unobserved_varnames}
-    for i, iteration in enumerate(sampler.blobs):
+    for i, iteration in enumerate(sampler.blobs[:sampler.chain.shape[1]]):
         for w, walker in enumerate(iteration):
             for p, param in zip(sampler.unobserved_varnames, walker):
                 if params[p] is None:

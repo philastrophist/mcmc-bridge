@@ -1,10 +1,29 @@
+import numpy as np
 import pymc3 as pm
 import theano
+import theano.tensor as tt
 from pymc3.backends.base import MultiTrace
 from pymc3.backends.ndarray import NDArray
+from tqdm import tqdm
+
+theano.config.compute_test_value = "ignore"
 
 
-def get_scalar_loglikelihood_function(model, vars=None):
+def get_unfitted_parameters(sampler, output_vars, model=None):
+        model = pm.modelcontext(model)
+        fn = model.fastfn(output_vars)
+        for i, sample in enumerate(sampler.flatchain.T):
+            point = array2point(sample, model=model)
+            results = fn(point)
+            if i == 0:
+                output_arrays = [np.zeros(sampler.flatchain.shape[:1] + r.shape) for r in results]
+            for j, r in enumerate(results):
+                output_arrays[j][i] = r
+        return results
+
+
+def get_scalar_loglikelihood_function(model, vars=None, nans='-inf'):
+    assert nans == '-inf' or nans == 'raise', "nans must be either 'raise' or '-inf'"
     model = pm.modelcontext(model)
     if vars is None:
         vars = model.vars
@@ -14,19 +33,28 @@ def get_scalar_loglikelihood_function(model, vars=None):
     f = theano.function([inarray0], logp0)
     f.trust_input = True
 
-    def wrapped(theta):
-        return f(theta)
+    unobserved = list(set(model.unobserved_RVs) - set(model.vars))
+    supplementary_fn = model.fastfn(unobserved)
 
-    return wrapped
+    def _lnpost(theta):
+        v = f(theta)
+        supplementary = supplementary_fn(array2point(theta))
+        if nans == '-inf' and np.isnan(v):
+            return -np.inf, supplementary
+        return v, supplementary
+
+    return _lnpost, [u.name for u in unobserved]
 
 
 def export_to_emcee(model=None, nwalker_multiple=2, **kwargs):
     import emcee
     model = pm.modelcontext(model)
-    lnpost = get_scalar_loglikelihood_function(model)
-    dim = model.ndim
+    lnpost, unobserved_varnames = get_scalar_loglikelihood_function(model)
+    dim = sum(var.dsize for var in model.vars)
     sampler = emcee.EnsembleSampler(nwalker_multiple*dim, dim, lnpost, **kwargs)
     sampler.model = model
+    sampler.unobserved_varnames = unobserved_varnames
+    sampler.ordering = pm.ArrayOrdering(model.vars)
     return sampler
 
 
@@ -61,24 +89,10 @@ def get_nwalkers(sampler):
     except AttributeError:
         return sampler.k
 
-def export_trace(sampler):
-    bar = tqdm(total=sampler.chain.shape[1] * get_nwalkers(sampler))
-    traces = []
-    for i, chain in enumerate(sampler.chain):
-        trace = NDArray(name=str(i), model=sampler.model)
-        trace.setup(sampler.chain.shape[1], i)
-        for apoint in chain:
-            trace.record(array2point(apoint, sampler.model, sampler.model.vars))
-            bar.update()
-        trace.close()
-        traces.append(trace)
-    return MultiTrace(traces)
-
 
 def get_start_point(sampler, init='advi', n_init=500000, progressbar=True, **kwargs):
-    start, _ = pm.init_nuts(init=init, chains=get_nwalkers(sampler), n_init=n_init, model=sampler.model, progressbar=progressbar, **kwargs)
+    start, _ = pm.init_nuts(init, get_nwalkers(sampler), n_init=n_init, model=sampler.model, progressbar=progressbar, **kwargs)
     return np.asarray([point2array(s, sampler.model, sampler.model.vars) for s in start])
-
 
 
 if __name__ == '__main__':
@@ -97,15 +111,19 @@ if __name__ == '__main__':
 
     with pm.Model() as model:  # model specifications in PyMC3 are wrapped in a with-statement
         pm.glm.GLM.from_formula('y ~ x', data)
+        # x = pm.Normal('x', mu=np.array([0., 10.]), sd=np.array([2., 1.]), shape=2)
+        # y = pm.HalfCauchy('y', 10.)
+        # b = pm.Binomial('b', 10., 1.)
+
         sampler = export_to_emcee()
         start = get_start_point(sampler)
 
         nsteps = 1000
-        from tqdm import tqdm
         for _ in tqdm(sampler.sample(start, iterations=nsteps), total=nsteps):
             pass
 
-        trace = export_trace(sampler)
-        pm.traceplot(trace, combined=False)
+        from mcmc_bridge.backends import EmceeTrace
+        trace = EmceeTrace(sampler)
+        pm.traceplot(trace, combined=True)
         import matplotlib.pyplot as plt
         plt.show()

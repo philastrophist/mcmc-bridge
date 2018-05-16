@@ -13,7 +13,7 @@ EMAIL = 'shaun.c.read@gmail.com'
 AUTHOR = 'philastrophist'
 
 # What packages are required for this module to be executed?
-REQUIRED = ['numpy', 'pymc3', 'emcee', 'matplotlib']
+REQUIRED = ['numpy', 'pymc3', 'emcee', 'matplotlib', 'tqdm']
 
 # The rest you shouldn't have to touch too much :)
 # ------------------------------------------------

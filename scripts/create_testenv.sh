@@ -33,9 +33,10 @@ then
       source activate ${ENVNAME}
     fi
 fi
-conda install --yes numpy scipy mkl-service
+conda install --yes numpy scipy mkl-service theano pygpu
 
 pip install --upgrade pip
 
 #  Install editable using the setup.py
+pip install -r requirements.txt
 pip install -e .

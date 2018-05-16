@@ -3,5 +3,6 @@ theano >= 1.0
 numpy
 emcee
 matplotlib
+statsmodels
 h5py
 tqdm

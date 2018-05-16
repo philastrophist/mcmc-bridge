@@ -1,2 +1,2 @@
 source activate testenv
-py.test
+py.test ./mcmc_bridge/tests

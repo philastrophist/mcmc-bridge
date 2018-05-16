@@ -93,37 +93,3 @@ def get_nwalkers(sampler):
 def get_start_point(sampler, init='advi', n_init=500000, progressbar=True, **kwargs):
     start, _ = pm.init_nuts(init, get_nwalkers(sampler), n_init=n_init, model=sampler.model, progressbar=progressbar, **kwargs)
     return np.asarray([point2array(s, sampler.model, sampler.model.vars) for s in start])
-
-
-if __name__ == '__main__':
-    import numpy as np
-    size = 200
-    true_intercept = 1
-    true_slope = 2
-
-    x = np.linspace(0, 1, size)
-    # y = a + b*x
-    true_regression_line = true_intercept + true_slope * x
-    # add noise
-    y = true_regression_line + np.random.normal(scale=.1, size=size)
-
-    data = dict(x=x, y=y)
-
-    with pm.Model() as model:  # model specifications in PyMC3 are wrapped in a with-statement
-        pm.glm.GLM.from_formula('y ~ x', data)
-        # x = pm.Normal('x', mu=np.array([0., 10.]), sd=np.array([2., 1.]), shape=2)
-        # y = pm.HalfCauchy('y', 10.)
-        # b = pm.Binomial('b', 10., 1.)
-
-        sampler = export_to_emcee()
-        start = get_start_point(sampler)
-
-        nsteps = 1000
-        for _ in tqdm(sampler.sample(start, iterations=nsteps), total=nsteps):
-            pass
-
-        from mcmc_bridge.backends import EmceeTrace
-        trace = EmceeTrace(sampler)
-        pm.traceplot(trace, combined=True)
-        import matplotlib.pyplot as plt
-        plt.show()

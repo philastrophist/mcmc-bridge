@@ -21,4 +21,4 @@ install:
   - . ./scripts/create_testenv.sh
 
 script:
-  - py.test
+  - . ./scripts/test.sh

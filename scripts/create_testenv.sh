@@ -33,7 +33,7 @@ then
       source activate ${ENVNAME}
     fi
 fi
-conda install --yes numpy scipy mkl-service theano pygpu
+conda install --yes numpy scipy mkl-service theano pygpu pytest
 
 pip install --upgrade pip
 

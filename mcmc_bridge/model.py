@@ -90,6 +90,15 @@ def get_nwalkers(sampler):
         return sampler.k
 
 
+def trace2array(trace, model):
+    return np.asarray([point2array(s, model, model.vars) for s in trace])
+
+
+def start_point_from_trace(sampler, **pymc3_kwargs):
+    trace = pm.sample(get_nwalkers(sampler), **pymc3_kwargs)
+    return trace2array(trace, sampler.model)
+
+
 def get_start_point(sampler, init='advi', n_init=500000, progressbar=True, **kwargs):
     start, _ = pm.init_nuts(init, get_nwalkers(sampler), n_init=n_init, model=sampler.model, progressbar=progressbar, **kwargs)
-    return np.asarray([point2array(s, sampler.model, sampler.model.vars) for s in start])
+    return trace2array(start, sampler.model)

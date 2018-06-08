@@ -1,9 +1,21 @@
+from functools import partial
+
 import numpy as np
 from tqdm import tqdm
 from mcmc_bridge.tests.models import correlation, linear
-from mcmc_bridge.pool import InitialisedInterruptiblePool
 from mcmc_bridge import EmceeTrace, export_to_emcee, get_start_point
+from mcmc_bridge.model import _get_scalar_loglikelihood_functions, lnpost
 import pytest
+
+
+@pytest.mark.parametrize("test_model_function", [linear, correlation])
+def test_supplementary(test_model_function):
+    pymc_model, true_variables = test_model_function()
+    with pymc_model:
+        f, sup_f, unobserved_varnames, unobserved_shapes = _get_scalar_loglikelihood_functions(pymc_model)
+        l = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
+        result = l(pymc_model.test_point)
+        assert len(result) == 1 + sum([np.product(i) for i in unobserved_shapes])
 
 
 @pytest.mark.parametrize("test_model_function,steps,nwalker_multiple", [(linear, 100, 12), (correlation, 100, 12)])

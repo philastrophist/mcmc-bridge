@@ -1,10 +1,17 @@
+import sys
+from functools import partial
+
 import numpy as np
 import pymc3 as pm
 import theano
 import theano.tensor as tt
+from emcee.interruptible_pool import InterruptiblePool
+from emcee.mpi_pool import MPIPool
+from mcmc_bridge.pool import InitialisedInterruptiblePool
 from pymc3.backends.base import MultiTrace
 from pymc3.backends.ndarray import NDArray
 from tqdm import tqdm
+from contextlib import contextmanager
 
 theano.config.compute_test_value = "ignore"
 
@@ -22,8 +29,7 @@ def get_unfitted_parameters(sampler, output_vars, model=None):
         return results
 
 
-def get_scalar_loglikelihood_function(model, vars=None, nans='-inf'):
-    assert nans == '-inf' or nans == 'raise', "nans must be either 'raise' or '-inf'"
+def _get_scalar_loglikelihood_functions(model, vars=None):
     model = pm.modelcontext(model)
     if vars is None:
         vars = model.vars
@@ -36,22 +42,47 @@ def get_scalar_loglikelihood_function(model, vars=None, nans='-inf'):
     unobserved = list(set(model.unobserved_RVs) - set(model.vars))
     supplementary_fn = model.fastfn(unobserved)
 
-    def _lnpost(theta):
-        v = f(theta)
-        supplementary = supplementary_fn(array2point(theta))
-        if nans == '-inf' and np.isnan(v):
-            return -np.inf, supplementary
-        return v, supplementary
-
-    return _lnpost, [u.name for u in unobserved]
+    return f, supplementary_fn, [u.name for u in unobserved]
 
 
-def export_to_emcee(model=None, nwalker_multiple=2, **kwargs):
+def lnpost(theta, likelihood_fn, supplementary_fn, nans='-inf'):
+    assert nans == '-inf' or nans == 'raise', "nans must be either 'raise' or '-inf'"
+    v = likelihood_fn(theta)
+    supplementary = supplementary_fn(array2point(theta))
+    if nans == '-inf' and np.isnan(v):
+        return -np.inf, supplementary
+    return v, supplementary
+
+
+def dummy_function(*args, **kwargs):
+    pass
+
+
+def export_to_emcee(model=None, nwalker_multiple=2, threads=1, use_pool=False, mpi_pool=None, **kwargs):
     import emcee
     model = pm.modelcontext(model)
-    lnpost, unobserved_varnames = get_scalar_loglikelihood_function(model)
+    pool = None
+
+    if (use_pool and (threads > 1)):
+        f, sup_f, unobserved_varnames = _get_scalar_loglikelihood_functions(model)
+        l = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
+        pool = InitialisedInterruptiblePool(threads, l)
+        fn = dummy_function
+    elif mpi_pool is not None:
+        pool = mpi_pool
+        f, sup_f, unobserved_varnames = _get_scalar_loglikelihood_functions(model)
+        l = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
+        pool.worker_function = l
+        if not pool.is_master():
+            print(pool.rank, "awaiting function input")
+            pool.wait()
+        fn = dummy_function
+    else:
+        f, sup_f, unobserved_varnames = _get_scalar_loglikelihood_functions(model)
+        fn = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
+
     dim = sum(var.dsize for var in model.vars)
-    sampler = emcee.EnsembleSampler(nwalker_multiple*dim, dim, lnpost, **kwargs)
+    sampler = emcee.EnsembleSampler(nwalker_multiple*dim, dim, fn, pool=pool, **kwargs)
     sampler.model = model
     sampler.unobserved_varnames = unobserved_varnames
     sampler.ordering = pm.ArrayOrdering(model.vars)
@@ -102,3 +133,5 @@ def start_point_from_trace(sampler, **pymc3_kwargs):
 def get_start_point(sampler, init='advi', n_init=500000, progressbar=True, **kwargs):
     start, _ = pm.init_nuts(init, get_nwalkers(sampler), n_init=n_init, model=sampler.model, progressbar=progressbar, **kwargs)
     return trace2array(start, sampler.model)
+
+

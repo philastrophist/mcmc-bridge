@@ -41,21 +41,36 @@ def _get_scalar_loglikelihood_functions(model, vars=None):
 
     unobserved = list(set(model.unobserved_RVs) - set(model.vars))
     supplementary_fn = model.fastfn(unobserved)
+    with model:
+        shapes = [v.shape for v in supplementary_fn(model.test_point)]
 
-    return f, supplementary_fn, [u.name for u in unobserved]
+    return f, supplementary_fn, [u.name for u in unobserved], shapes
 
 
 def lnpost(theta, likelihood_fn, supplementary_fn, nans='-inf'):
     assert nans == '-inf' or nans == 'raise', "nans must be either 'raise' or '-inf'"
     v = likelihood_fn(theta)
     supplementary = supplementary_fn(array2point(theta))
+    supplementary = tuple([i.ravel() for i in supplementary])
     if nans == '-inf' and np.isnan(v):
-        return -np.inf, supplementary
-    return v, supplementary
+        return (-np.inf, ) + supplementary
+    return (v, ) + supplementary
 
 
 def dummy_function(*args, **kwargs):
     pass
+
+
+def backwards_compatible(sampler):
+    if hasattr(sampler, 'k'):
+        sampler.nwalkers = sampler.k
+    else:
+        sampler.k = sampler.nwalkers
+
+    if hasattr(sampler, 'dim'):
+        sampler.ndim = sampler.dim
+    else:
+        sampler.dim = sampler.ndim
 
 
 def export_to_emcee(model=None, nwalker_multiple=2, threads=1, use_pool=False, mpi_pool=None, **kwargs):
@@ -64,13 +79,13 @@ def export_to_emcee(model=None, nwalker_multiple=2, threads=1, use_pool=False, m
     pool = None
 
     if (use_pool and (threads > 1)):
-        f, sup_f, unobserved_varnames = _get_scalar_loglikelihood_functions(model)
+        f, sup_f, unobserved_varnames, unobserved_shapes = _get_scalar_loglikelihood_functions(model)
         l = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
         pool = InitialisedInterruptiblePool(threads, l)
         fn = dummy_function
     elif mpi_pool is not None:
         pool = mpi_pool
-        f, sup_f, unobserved_varnames = _get_scalar_loglikelihood_functions(model)
+        f, sup_f, unobserved_varnames, unobserved_shapes = _get_scalar_loglikelihood_functions(model)
         l = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
         pool.worker_function = l
         if not pool.is_master():
@@ -78,14 +93,16 @@ def export_to_emcee(model=None, nwalker_multiple=2, threads=1, use_pool=False, m
             pool.wait()
         fn = dummy_function
     else:
-        f, sup_f, unobserved_varnames = _get_scalar_loglikelihood_functions(model)
+        f, sup_f, unobserved_varnames, unobserved_shapes = _get_scalar_loglikelihood_functions(model)
         fn = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
 
     dim = sum(var.dsize for var in model.vars)
     sampler = emcee.EnsembleSampler(nwalker_multiple*dim, dim, fn, pool=pool, **kwargs)
+    backwards_compatible(sampler)
     sampler.model = model
     sampler.unobserved_varnames = unobserved_varnames
     sampler.ordering = pm.ArrayOrdering(model.vars)
+    sampler.unobserved_varshapes = unobserved_shapes
     return sampler
 
 
@@ -119,6 +136,13 @@ def get_nwalkers(sampler):
         return sampler.nwalkers
     except AttributeError:
         return sampler.k
+
+
+def get_ndim(sampler):
+    try:
+        return sampler.dim
+    except AttributeError:
+        return sampler.ndim
 
 
 def trace2array(trace, model):

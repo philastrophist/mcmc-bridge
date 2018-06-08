@@ -58,13 +58,13 @@ class EmceeWalkerTrace(NDArray):
 
 
 def unpack_param_blobs(sampler):
-    params = {n: None for n in sampler.unobserved_varnames}
-    for i, iteration in enumerate(sampler.blobs[:sampler.chain.shape[1]]):
-        for w, walker in enumerate(iteration):
-            for p, param in zip(sampler.unobserved_varnames, walker):
-                if params[p] is None:
-                    params[p] = np.zeros(sampler.chain.shape[:2]+param.shape)
-                params[p][w, i] = param
+    params = {}
+    previous_size = 0
+    for varname, varshape in zip(sampler.unobserved_varnames, sampler.unobserved_varshapes):
+        size = np.product(varshape, dtype=int)
+        blob = np.atleast_3d(sampler.blobs)[..., previous_size:previous_size+size].reshape(sampler.blobs.shape[:2]+varshape)
+        params[varname] = np.swapaxes(blob, 0, 1)
+        previous_size += size
     return params
 
 

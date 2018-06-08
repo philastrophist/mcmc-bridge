@@ -6,7 +6,7 @@ from mcmc_bridge import EmceeTrace, export_to_emcee, get_start_point
 import pytest
 
 
-@pytest.mark.parametrize("test_model_function,steps,nwalker_multiple", [(linear, 1000, 12)])
+@pytest.mark.parametrize("test_model_function,steps,nwalker_multiple", [(linear, 100, 12), (correlation, 100, 12)])
 @pytest.mark.parametrize("threads,use_pool", [(1, False), (4, True)])
 def test_model(test_model_function, steps, nwalker_multiple, threads, use_pool):
     pymc_model, true_variables = test_model_function()

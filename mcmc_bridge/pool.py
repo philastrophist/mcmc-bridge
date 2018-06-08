@@ -3,7 +3,10 @@ from contextlib import contextmanager
 
 from emcee.interruptible_pool import InterruptiblePool
 from schwimmbad.mpi import MPIPool, _dummy_callback, log, _VERBOSE
-import mpi4py.MPI as MPI
+try:
+    import mpi4py.MPI as MPI
+except ImportError:
+    pass
 
 
 def initialise_global_fn(fn):

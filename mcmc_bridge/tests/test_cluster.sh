@@ -1,8 +1,9 @@
 #!/bin/bash
-#PBS -N pbsdsh
+#PBS -N test-pymc3-emcee-bridge
 #PBS -m abe
-#PBS -l nodes=1:ppn=8
-#PBS -l walltime=00:01:00
+#PBS -k oe
+#PBS -l nodes=2:ppn=8
+#PBS -l walltime=00:30:00
 
 echo ------------------------------------------------------
 echo -n 'Job is running on node '; cat $PBS_NODEFILE
@@ -20,21 +21,26 @@ echo PBS: PATH = $PBS_O_PATH
 echo ------------------------------------------------------
 
 source activate pymc3-uptodate
+export MKL_THREADING_LAYER="GNU"
 
 # go to test directory
-cd "$(dirname "$(python -c "import os; os.environ['MKL_THREADING_LAYER'] = 'GNU'; import mcmc_bridge as m; print(m.__file__)")")" || exit 1
+cd "$(dirname "$(python -c "import mcmc_bridge as m; print(m.__file__)")")" || exit 1
 cd tests || exit 1
 
-compiledirbase="$(python -c "import os; os.environ['MKL_THREADING_LAYER'] = 'GNU'; import theano as t; print(t.config.compiledir)")"
+compiledirbase="$(python -c "import theano as t; print(t.config.compiledir)")"
 
 if [[ "$compiledirbase" = "/home/sread/.theano"* ]]; then
-    rm -r "$compiledirbase"
+    echo -n "removing previous theano/compile directories for safety..."
+    rm -r "$compiledirbase" || exit 1
+    echo "Done"
 else
     echo "Dangerous compiledirbase $compiledirbase"
     exit 1
 fi
 
-mpiexec python _test_cluster.py 8 1000 "$compiledirbase"
+NCPUS=$(wc -l $PBS_NODEFILE | awk '{print $1}')
+
+mpiexec python _test_cluster.py 16 8000 "$compiledirbase"
 
 echo ------------------------------------------------------
 echo Job ends

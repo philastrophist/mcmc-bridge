@@ -1,3 +1,4 @@
+import sys
 from contextlib import contextmanager
 
 from emcee.interruptible_pool import InterruptiblePool
@@ -93,23 +94,18 @@ class InitialisedMPIPool(MPIPool):
         super().__init__(comm)
         self.worker_function = None
 
+    @contextmanager
+    def kill_workers_on_close(self, exitcode=0):
+        yield
+        self.close()
+        if not self.is_master():
+            sys.exit(exitcode)
 
-    # def broadcast_worker_function(self):
-    #     status = MPI.Status()
-    #     if self.is_master():
-    #         requests = []
-    #         for worker in self.workers:
-    #             req = self.comm.send(self.worker_function, worker, worker)
-    #             requests.append(req)
-    #         for req in requests:
-    #             req.wait()
-    #
-    #     else:
-    #         req = self.comm.recv(source=self.master, tag=self.rank)
-    #         function = req.wait()
-    #         self.worker_function = function
-    #         print(self.rank, "received function")
-
+    def wait_and_exit(self):
+        if not self.is_master():
+            self.wait()
+            print(self.rank, "shutdown")
+            sys.exit(0)
 
 
     def wait(self, callback=None):
@@ -219,6 +215,7 @@ class InitialisedMPIPool(MPIPool):
             pending -= 1
 
         return resultlist
+
 
     def close(self):
         """ Tell all the workers to quit."""

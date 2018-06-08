@@ -58,35 +58,6 @@ def dummy_function(*args, **kwargs):
     pass
 
 
-# @contextmanager
-# def EmceeMPIPool(**kwargs):
-#     """
-#     Context required for building pymc3 models with MPI
-#     Example:
-#     >>> with EmceeMPIPool(loadbalance=True):
-#     ...     with pm.Model() as model:
-#     ...         n = pm.Normal('n', 0, 1)
-#     >>> with model:
-#     ...     sampler = export_to_emcee()
-#     >>> sample(sampler)
-#     :param kwargs:
-#     :return:
-#     """
-#     pool = MPIPool(**kwargs)
-#     if pool.is_master():
-#         # return the pool and
-#         yield pool
-#         with pm.modelcontext(None) as model:
-#             _get_scalar_loglikelihood_functions(model)
-#         print('Master: Built model. Signalling other processes')
-#
-#     else:
-#         pool.wait()  # now wait for emcee instructions
-#         sys.exit(0)
-
-
-
-
 def export_to_emcee(model=None, nwalker_multiple=2, threads=1, use_pool=False, mpi_pool=None, **kwargs):
     import emcee
     model = pm.modelcontext(model)
@@ -99,24 +70,13 @@ def export_to_emcee(model=None, nwalker_multiple=2, threads=1, use_pool=False, m
         fn = dummy_function
     elif mpi_pool is not None:
         pool = mpi_pool
-        # with pool:
-        #     if pool.is_master():
-        #         print('master building functions')
-        #         f, sup_f, unobserved_varnames = _get_scalar_loglikelihood_functions(model)
-        #         l = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
-        #         print('Built functions')
-        #     else:
-        #         pool.wait()
-        #
         f, sup_f, unobserved_varnames = _get_scalar_loglikelihood_functions(model)
         l = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
         pool.worker_function = l
-
-        fn = dummy_function
         if not pool.is_master():
             print(pool.rank, "awaiting function input")
             pool.wait()
-
+        fn = dummy_function
     else:
         f, sup_f, unobserved_varnames = _get_scalar_loglikelihood_functions(model)
         fn = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
@@ -173,3 +133,5 @@ def start_point_from_trace(sampler, **pymc3_kwargs):
 def get_start_point(sampler, init='advi', n_init=500000, progressbar=True, **kwargs):
     start, _ = pm.init_nuts(init, get_nwalkers(sampler), n_init=n_init, model=sampler.model, progressbar=progressbar, **kwargs)
     return trace2array(start, sampler.model)
+
+

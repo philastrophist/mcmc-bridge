@@ -24,7 +24,7 @@ print(theano.config.compiledir)
 
 from tqdm import tqdm
 from mcmc_bridge.tests.models import linear
-from mcmc_bridge import export_to_emcee, get_start_point
+from mcmc_bridge import export_to_emcee, get_start_point, EmceeTrace
 from mcmc_bridge.pool import InitialisedMPIPool
 import time
 
@@ -33,22 +33,19 @@ print(rank, "compiled model")
 
 pool = InitialisedMPIPool()
 
-with pool:
-    with pymc_model:
-        sampler = export_to_emcee(nwalker_multiple=args.nwalker_multiple, mpi_pool=pool)
-        if not pool.is_master():
-            pool.wait()
-            print(pool.rank, "shutdown")
-            sys.exit(0)
-
-        start = get_start_point(sampler)
-        start_time = time.time()
-        for _ in tqdm(sampler.sample(start, iterations=args.steps), total=args.steps):
-            pass
-
-print("MPI sampling complete in {:.1f}s".format(time.time() - start_time))
-
 with pymc_model:
+    with pool.kill_workers_on_close():
+        sampler = export_to_emcee(nwalker_multiple=args.nwalker_multiple, mpi_pool=pool)
+        if pool.is_master():
+            start = get_start_point(sampler)
+            start_time = time.time()
+            for _ in tqdm(sampler.sample(start, iterations=args.steps), total=args.steps):
+                pass
+
+    print("MPI sampling complete in {:.1f}s".format(time.time() - start_time))
+    trace = EmceeTrace(sampler)
+    print(len(trace))
+
     sampler = export_to_emcee(nwalker_multiple=args.nwalker_multiple)
     start_time = time.time()
     for _ in tqdm(sampler.sample(start, iterations=args.steps), total=args.steps):

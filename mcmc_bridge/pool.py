@@ -25,53 +25,6 @@ class InitialisedInterruptiblePool(InterruptiblePool):
         return super().map(call_global_fn, iterable, chunksize)
 
 
-# class EmceeMPIPool(MPIPool):
-#     def __init__(self, comm=None, debug=False, loadbalance=False):
-#         super().__init__(comm, debug, loadbalance)
-#
-#     def set_function(self, function):
-#         """
-#         Sets the worker function before .wait is called
-#         :param function:
-#         :return:
-#         """
-#         initialise_global_fn(function)
-#
-#     def map(self, function, tasks):
-#         return super().map(call_global_fn, tasks)
-#
-#     @contextmanager
-#     def as_master(self):
-#         """hold here until the context is exited in the master process if you are a worker"""
-#         if not self.is_master():
-#             print(self.rank, "waiting")
-#             self.wait()
-#             print(self.rank, "finished waiting")
-#         print(self.rank, "I am master")
-#         yield
-#         print(self.rank, "is closing the pool")
-#         self.close()
-#         print(self.rank, "pool closed")
-#
-#     @contextmanager
-#     def as_worker(self):
-#         """hold here until the context is exited in the master process if you are a worker"""
-#         if self.is_master():
-#             self.wait()
-#         yield
-#         self.close()
-#
-#     @contextmanager
-#     def as_all(self):
-#         """Just closes the pool after context is exited"""
-#         yield
-#         self.close()
-
-
-class ReceiveFunctionMessage(object):
-    pass
-
-
 class InitialisedMPIPool(MPIPool):
     """A processing pool that distributes tasks using MPI.
 

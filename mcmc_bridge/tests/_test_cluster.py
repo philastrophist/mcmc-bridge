@@ -2,6 +2,7 @@ import os
 import sys
 
 import mpi4py.MPI as MPI
+import numpy as np
 
 rank = MPI.COMM_WORLD.Get_rank()
 import argparse
@@ -44,7 +45,6 @@ with pymc_model:
 
     print("MPI sampling complete in {:.1f}s".format(time.time() - start_time))
     trace = EmceeTrace(sampler)
-    print(len(trace))
 
     sampler = export_to_emcee(nwalker_multiple=args.nwalker_multiple)
     start_time = time.time()

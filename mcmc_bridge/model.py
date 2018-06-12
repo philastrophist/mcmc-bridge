@@ -51,10 +51,10 @@ def lnpost(theta, likelihood_fn, supplementary_fn, nans='-inf'):
     assert nans == '-inf' or nans == 'raise', "nans must be either 'raise' or '-inf'"
     v = likelihood_fn(theta)
     supplementary = supplementary_fn(array2point(theta))
-    supplementary = tuple([i.ravel() for i in supplementary])
+    supplementary = np.concatenate([i.ravel() for i in supplementary])
     if nans == '-inf' and np.isnan(v):
-        return (-np.inf, ) + supplementary
-    return (v, ) + supplementary
+        return -np.inf,  supplementary
+    return v, supplementary
 
 
 def dummy_function(*args, **kwargs):

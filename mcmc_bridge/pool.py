@@ -6,7 +6,7 @@ from schwimmbad.mpi import MPIPool, _dummy_callback, log, _VERBOSE
 try:
     import mpi4py.MPI as MPI
 except ImportError:
-    pass
+    MPI = None
 
 
 def initialise_global_fn(fn):

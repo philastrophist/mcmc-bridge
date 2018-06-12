@@ -2,7 +2,7 @@ theano >= 1.0
 -e git+https://github.com/pymc-devs/pymc3.git@c1af916b0af864a12ea41ce01344f5855f14855f#egg=pymc3
 schwimmbad
 numpy
-emcee
+emcee==3.0.0.dev0
 matplotlib
 statsmodels
 h5py

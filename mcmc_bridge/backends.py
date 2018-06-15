@@ -66,8 +66,6 @@ def unpack_param_blobs(sampler):
     for varname, varshape in zip(sampler.unobserved_varnames, sampler.unobserved_varshapes):
         size = np.product(varshape, dtype=int)
         params[varname] = (slice(previous_size, previous_size+size), sampler.blobs.shape[:1]+varshape)
-        # blob = np.atleast_3d(sampler.blobs)[..., previous_size:previous_size+size].reshape(sampler.blobs.shape[:2]+varshape)
-        # params[varname] = np.swapaxes(blob, 0, 1)
         previous_size += size
     return params
 

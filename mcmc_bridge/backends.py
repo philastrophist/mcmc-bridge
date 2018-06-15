@@ -10,6 +10,7 @@ class Indexer(object):
 
         self.chain = self.walker_trace.chain
         self.raw_samples = self.walker_trace.emcee_trace_obj.sampler.chain
+        self.raw_blobs = self.walker_trace.emcee_trace_obj.sampler.blobs
         self.unfitted_chain = self.walker_trace.emcee_trace_obj.unfitted_chain
         self.ordering = self.walker_trace.emcee_trace_obj.sampler.ordering
 
@@ -19,7 +20,9 @@ class Indexer(object):
             samples = self.raw_samples[self.chain, :, varmap.slc]
             return samples.reshape(samples.shape[:1]+varmap.shp).astype(varmap.dtyp)
         except KeyError:
-            return self.unfitted_chain[varname][self.walker_trace.chain]
+            dslice, dshape = self.unfitted_chain[varname]
+            return self.raw_blobs[:, self.chain, dslice].reshape(dshape)
+
 
     def items(self):
         names = [i.name for i in self.walker_trace.model.vars] + self.walker_trace.emcee_trace_obj.sampler.unobserved_varnames
@@ -62,8 +65,9 @@ def unpack_param_blobs(sampler):
     previous_size = 0
     for varname, varshape in zip(sampler.unobserved_varnames, sampler.unobserved_varshapes):
         size = np.product(varshape, dtype=int)
-        blob = np.atleast_3d(sampler.blobs)[..., previous_size:previous_size+size].reshape(sampler.blobs.shape[:2]+varshape)
-        params[varname] = np.swapaxes(blob, 0, 1)
+        params[varname] = (slice(previous_size, previous_size+size), sampler.blobs.shape[:1]+varshape)
+        # blob = np.atleast_3d(sampler.blobs)[..., previous_size:previous_size+size].reshape(sampler.blobs.shape[:2]+varshape)
+        # params[varname] = np.swapaxes(blob, 0, 1)
         previous_size += size
     return params
 

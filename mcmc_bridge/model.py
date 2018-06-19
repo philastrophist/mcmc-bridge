@@ -154,6 +154,20 @@ def start_point_from_trace(sampler, **pymc3_kwargs):
     return trace2array(trace, sampler.model)
 
 
+def metropolis_start_points(sampler, sd, n=100, scaling=0.001, seed=None, model=None):
+    step = pm.Metropolis(proposal_dist=pm.NormalProposal, scaling=scaling)
+    for s in step.methods:
+        s.proposal_dist.s = sd
+    trace = pm.sample(get_nwalkers(sampler)*n, step=step, tune=False, cores=1, chains=1, random_seed=seed)
+    array = trace2array(trace, pm.modelcontext(model))
+    good = np.isfinite(trace.accept).all(axis=1)
+    np.random.seed(seed)
+    chosen = np.random.choice(len(good), size=get_nwalkers(sampler))
+    array = array[good][chosen]
+    assert array.shape[0] == get_nwalkers(sampler), "Metropolis didn't sample enough good values {}/{}".format(good.sum(), len(trace))
+    return array
+
+
 def get_start_point(sampler, init='advi', n_init=500000, progressbar=True, **kwargs):
     start, _ = pm.init_nuts(init, get_nwalkers(sampler), n_init=n_init, model=sampler.model, progressbar=progressbar, **kwargs)
     return trace2array(start, sampler.model)

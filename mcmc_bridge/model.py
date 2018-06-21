@@ -153,14 +153,15 @@ def start_point_from_trace(n, model=None, **pymc3_kwargs):
     return trace2array(trace, pm.modelcontext(model))
 
 
-def metropolis_start_points(n, sd, scaling=0.001, seed=None, model=None):
-    step = pm.Metropolis(proposal_dist=pm.NormalProposal, scaling=scaling)
+def metropolis_start_points(n, sd, tune=100, scaling=0.001, seed=None, model=None):
+    step = pm.Metropolis(proposal_dist=pm.NormalProposal, scaling=scaling, tune_interval=tune*2)  # basically, don't tune
     for s in step.methods:
         s.proposal_dist.s = sd
-    trace = pm.sample(n, step=step, tune=False, cores=1, chains=1, random_seed=seed)
+    trace = pm.sample(n, step=step, cores=1, chains=1, tune=tune, random_seed=seed)
     array = trace2array(trace, pm.modelcontext(model))
     good = np.isfinite(trace.accept).all(axis=1)
-    np.random.seed(seed)
+    if seed is not None:
+        np.random.seed(seed)
     chosen = np.random.choice(len(good), size=n)
     array = array[good][chosen]
     assert array.shape[0] == n, "Metropolis didn't sample enough good values {}/{}".format(good.sum(), len(trace))
@@ -175,8 +176,8 @@ def get_start_point(sampler, init='advi', **kwargs):
     if 'advi' in init or 'nuts' in init.lower():
         return nuts_start_points(get_nwalkers(sampler), init, **kwargs)
     elif init == 'metropolis':
-        return metropolis_start_points(get_nwalkers(sampler) * kwargs.pop('n', 10), **kwargs)
+        return metropolis_start_points(get_nwalkers(sampler), **kwargs)
     else:
-        return start_point_from_trace(get_nwalkers(sampler), **kwargs)
+        return start_point_from_trace(get_nwalkers(sampler), init=init, **kwargs)
 
 

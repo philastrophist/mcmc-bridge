@@ -89,8 +89,7 @@ def export_to_emcee(model=None, nwalker_multiple=2, threads=1, use_pool=False, m
         l = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
         pool.worker_function = l
         if not pool.is_master():
-            print(pool.rank, "awaiting function input")
-            pool.wait()
+            print(pool.rank, "ready for function input")
         fn = dummy_function
     else:
         f, sup_f, unobserved_varnames, unobserved_shapes = _get_scalar_loglikelihood_functions(model)
@@ -149,27 +148,35 @@ def trace2array(trace, model):
     return np.asarray([point2array(s, model, model.vars) for s in trace])
 
 
-def start_point_from_trace(sampler, **pymc3_kwargs):
-    trace = pm.sample(get_nwalkers(sampler), **pymc3_kwargs)
-    return trace2array(trace, sampler.model)
+def start_point_from_trace(n, model=None, **pymc3_kwargs):
+    trace = pm.sample(n, **pymc3_kwargs)
+    return trace2array(trace, pm.modelcontext(model))
 
 
-def metropolis_start_points(sampler, sd, n=100, scaling=0.001, seed=None, model=None):
+def metropolis_start_points(n, sd, scaling=0.001, seed=None, model=None):
     step = pm.Metropolis(proposal_dist=pm.NormalProposal, scaling=scaling)
     for s in step.methods:
         s.proposal_dist.s = sd
-    trace = pm.sample(get_nwalkers(sampler)*n, step=step, tune=False, cores=1, chains=1, random_seed=seed)
+    trace = pm.sample(n, step=step, tune=False, cores=1, chains=1, random_seed=seed)
     array = trace2array(trace, pm.modelcontext(model))
     good = np.isfinite(trace.accept).all(axis=1)
     np.random.seed(seed)
-    chosen = np.random.choice(len(good), size=get_nwalkers(sampler))
+    chosen = np.random.choice(len(good), size=n)
     array = array[good][chosen]
-    assert array.shape[0] == get_nwalkers(sampler), "Metropolis didn't sample enough good values {}/{}".format(good.sum(), len(trace))
+    assert array.shape[0] == n, "Metropolis didn't sample enough good values {}/{}".format(good.sum(), len(trace))
     return array
 
+def nuts_start_points(n, init, model=None, **kwargs):
+    start, _ = pm.init_nuts(init, n, **kwargs)
+    return trace2array(start, pm.modelcontext(model))
 
-def get_start_point(sampler, init='advi', n_init=500000, progressbar=True, **kwargs):
-    start, _ = pm.init_nuts(init, get_nwalkers(sampler), n_init=n_init, model=sampler.model, progressbar=progressbar, **kwargs)
-    return trace2array(start, sampler.model)
+
+def get_start_point(sampler, init='advi', **kwargs):
+    if 'advi' in init or 'nuts' in init.lower():
+        return nuts_start_points(get_nwalkers(sampler), init, **kwargs)
+    elif init == 'metropolis':
+        return metropolis_start_points(get_nwalkers(sampler) * kwargs.pop('n', 10), **kwargs)
+    else:
+        return start_point_from_trace(get_nwalkers(sampler), **kwargs)
 
 

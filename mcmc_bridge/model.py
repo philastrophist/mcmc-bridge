@@ -153,11 +153,11 @@ def start_point_from_trace(n, model=None, **pymc3_kwargs):
     return trace2array(trace, pm.modelcontext(model))
 
 
-def metropolis_start_points(n, sd, tune=100, scaling=0.001, seed=None, model=None):
+def metropolis_start_points(n, sd, tune=100, scaling=0.001, seed=None, model=None, **kwargs):
     step = pm.Metropolis(proposal_dist=pm.NormalProposal, scaling=scaling, tune_interval=tune*2)  # basically, don't tune
     for s in step.methods:
         s.proposal_dist.s = sd
-    trace = pm.sample(n, step=step, cores=1, chains=1, tune=tune, random_seed=seed)
+    trace = pm.sample(n, step=step, cores=1, chains=1, tune=tune, random_seed=seed, **kwargs)
     array = trace2array(trace, pm.modelcontext(model))
     good = np.isfinite(trace.accept).all(axis=1)
     if seed is not None:

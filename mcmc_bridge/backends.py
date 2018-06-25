@@ -46,7 +46,7 @@ class Pymc3EmceeHDF5Backend(emcee.backends.HDFBackend):
         super(Pymc3EmceeHDF5Backend, self).__init__(filename, name, read_only)
         if self.initialized:
             with self.open('r') as f:
-                group = f[self.name]['model']
+                group = f['model']
                 self.unobserved_varnames = group.attrs['unobserved_varnames'].split('|')
                 self.unobserved_varshapes = [tuple(group['unobserved_varshapes'][k]) for k in self.unobserved_varnames]
                 self.ordering = HDFCompatibleArrayOrdering.from_hdf(group['ordering'])
@@ -66,8 +66,7 @@ class Pymc3EmceeHDF5Backend(emcee.backends.HDFBackend):
         unobserved_varnames = [i.name for i in unobserved]
 
         with self.open('a') as f:
-            parent = f[self.name]
-            group = parent.create_group('model')
+            group = f.create_group('model')
             group.attrs['unobserved_varnames'] = u'|'.join(unobserved_varnames)
             unobserved_varshapes = group.create_group('unobserved_varshapes')
             for name, shape in zip(unobserved_varnames, unobserved_shapes):

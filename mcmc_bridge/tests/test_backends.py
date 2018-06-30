@@ -51,7 +51,7 @@ def test_pymc3_emcee_hdf_backend_shapes_names_without_model_context(temp_filenam
     with model:
         backend = Pymc3EmceeHDF5Backend(temp_filename)
         sampler = export_to_emcee(nwalker_multiple=2, backend=backend)
-        start = start_point_from_trace(sampler)
+        start = start_point_from_trace(sampler.nwalkers)
         sampler.run_mcmc(start, iterations)
 
     backend = Pymc3EmceeHDF5Backend(temp_filename)  # reload the backend after everything is closed

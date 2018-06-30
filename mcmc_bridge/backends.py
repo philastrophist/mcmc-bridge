@@ -1,4 +1,5 @@
 from _warnings import warn
+from functools import reduce
 
 import h5py
 
@@ -83,6 +84,7 @@ class Indexer(object):
         self.chain = walker_trace.chain
         self.unfitted_chain = walker_trace.parent_multitrace.unfitted_chain
         self.ordering = self.emcee_backend.ordering
+        self.indices = self.walker_trace.indices
 
     def __getitem__(self, item):
         if isinstance(item, tuple):
@@ -90,14 +92,18 @@ class Indexer(object):
         else:
             varname = item
             _slice = slice(None)
+
+        index = self.indices[_slice]
         with self.emcee_backend.open('r') as f:
             try:
                 varmap = self.ordering[varname]
-                samples = f[self.emcee_backend.name]['chain'][_slice, self.chain, varmap.slc]
+                samples = f[self.emcee_backend.name]['chain'][index, self.chain, varmap.slc]
                 return samples.reshape(samples.shape[:1]+varmap.shp).astype(varmap.dtyp)
             except KeyError:
                 dslice, dshape = self.unfitted_chain[varname]
-                return f[self.emcee_backend.name]['blobs'][_slice, self.chain, dslice].reshape(dshape)
+                a = f[self.emcee_backend.name]['blobs'][index, self.chain][:, dslice]
+                print(a.shape)
+                return a.reshape(a.shape[:1] + dshape[1:])
 
 
 class EmceeWalkerTrace(NDArray):
@@ -112,17 +118,25 @@ class EmceeWalkerTrace(NDArray):
             self.model = None
             self.varnames = self.backend.unobserved_varnames + list(self.backend.ordering.by_name.keys())
             self.fn = None
+            self.vars = None
 
         self.chain = chain
         self._is_base_setup = True
         self.sampler_vars = None
         self._warnings = []
 
-        self.chain = chain
-        self.draw_idx = self.backend.iteration
+        self.idxs = [slice(None)]
         self.draws = self.draw_idx
         self._stats = None
 
+    @property
+    def indices(self):
+        return reduce(lambda x, y: x[y], self.idxs, range(self.backend.iteration))
+
+
+    @property
+    def draw_idx(self):
+        return len(self.indices)
 
     @property
     def samples(self):
@@ -143,6 +157,17 @@ class EmceeWalkerTrace(NDArray):
     def get_values(self, varname, burn=0, thin=1):
         return self.samples[varname, burn::thin]
 
+    def _slice(self, idx):
+        # Slicing directly instead of using _slice_as_ndarray to
+        # support stop value in slice (which is needed by
+        # iter_sample).
+
+        # Only the first `draw_idx` value are valid because of preallocation
+        idx = slice(*idx.indices(len(self)))
+
+        sliced = EmceeWalkerTrace(self.parent_multitrace, self.chain, name=self.name, model=self.model)
+        sliced.idxs.append(idx)
+        return sliced
 
 
 def unpack_param_blobs(backend):
@@ -155,7 +180,7 @@ def unpack_param_blobs(backend):
                 sl = Ellipsis
             else:
                 sl = slice(previous_size, previous_size + size)
-            params[varname] = (sl, f[backend.name]['blobs'].shape[:1]+varshape)
+            params[varname] = (sl, (backend.iteration, )+varshape)
         previous_size += size
     return params
 

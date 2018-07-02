@@ -14,7 +14,7 @@ from mcmc_bridge.model import start_point_from_trace
 def test_model():
     with pm.Model() as model:
         pm.Normal('normal', mu=np.ones((2,3)), sd=np.ones((2, 3)), shape=(2,3))
-        pm.HalfCauchy('halfcauchy', beta=1)
+        pm.HalfCauchy('halfcauchy', beta=np.ones((3, 2)), shape=(3, 2))
         pm.Binomial('binomial', n=2, p=0.5)
     return model
 

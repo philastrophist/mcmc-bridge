@@ -102,7 +102,6 @@ class Indexer(object):
             except KeyError:
                 dslice, dshape = self.unfitted_chain[varname]
                 a = f[self.emcee_backend.name]['blobs'][index, self.chain][:, dslice]
-                print(a.shape)
                 return a.reshape(a.shape[:1] + dshape[1:])
 
 
@@ -168,6 +167,9 @@ class EmceeWalkerTrace(NDArray):
         sliced = EmceeWalkerTrace(self.parent_multitrace, self.chain, name=self.name, model=self.model)
         sliced.idxs.append(idx)
         return sliced
+
+    def point(self, idx):
+        return {v: self.samples[v, int(idx)] for v in self.varnames}
 
 
 def unpack_param_blobs(backend):

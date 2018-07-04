@@ -1,8 +1,8 @@
 import os
 
 from mcmc_bridge import get_start_point, export_to_emcee
-from mcmc_bridge.backends import HDFCompatibleArrayOrdering, Pymc3EmceeHDF5Backend, EmceeTrace
-from emcee.backends import TempHDFBackend
+from mcmc_bridge.backends import EmceeTrace
+from emcee.backends import TempHDFBackend, HDFBackend
 import pymc3 as pm
 import numpy as np
 import pytest
@@ -16,26 +16,8 @@ def test_model():
         pm.Normal('normal', mu=np.ones((2,3)), sd=np.ones((2, 3)), shape=(2,3))
         pm.HalfCauchy('halfcauchy', beta=np.ones((3, 2)), shape=(3, 2))
         pm.Binomial('binomial', n=2, p=0.5)
+        pm.Dirichlet('dirchlet', np.ones(6), shape=6)
     return model
-
-def test_array_ordering():
-    model = test_model()
-
-    ordering = pm.ArrayOrdering(model.vars)
-    hdf_ordering = HDFCompatibleArrayOrdering(model.vars)
-
-    with TempHDFBackend() as backend:
-        with backend.open('a') as f:
-            group = f.create_group('test')
-            hdf_ordering.to_hdf(group)
-
-            out_hdf_ordering = HDFCompatibleArrayOrdering.from_hdf(group)
-
-        assert len(ordering.vmap) == len(out_hdf_ordering.vmap)
-
-        for in_vmap, out_vmap in zip(ordering.vmap, out_hdf_ordering.vmap):
-            for attr in ['var', 'slc', 'shp', 'dtyp']:
-                assert getattr(in_vmap, attr) == getattr(out_vmap, attr)
 
 
 @pytest.fixture("module")
@@ -49,12 +31,12 @@ def test_pymc3_emcee_hdf_backend_shapes_names_without_model_context(temp_filenam
     model = test_model()
     iterations = 10
     with model:
-        backend = Pymc3EmceeHDF5Backend(temp_filename)
+        backend = HDFBackend(temp_filename)
         sampler = export_to_emcee(nwalker_multiple=2, backend=backend)
         start = start_point_from_trace(sampler.nwalkers)
         sampler.run_mcmc(start, iterations)
 
-    backend = Pymc3EmceeHDF5Backend(temp_filename)  # reload the backend after everything is closed
+    backend = HDFBackend(temp_filename)  # reload the backend after everything is closed
     trace = EmceeTrace(backend)
 
     for k, v in model.named_vars.items():

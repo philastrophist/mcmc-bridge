@@ -203,3 +203,7 @@ class EmceeTrace(MultiTrace):
     @property
     def stat_names(self):
         return {}
+
+    def get_values(self, varname, burn=0, thin=1, combine=True, chains=None, squeeze=True):
+        return np.asarray(super().get_values(varname, burn, thin, combine, chains, squeeze))
+

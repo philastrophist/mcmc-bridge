@@ -77,12 +77,14 @@ def export_to_emcee(model=None, nwalker_multiple=2, threads=1, use_pool=False, m
     import emcee
     model = pm.modelcontext(model)
     pool = None
+    dim = sum(var.dsize for var in model.vars)
 
     if (use_pool and (threads > 1)):
         f, sup_f, unobserved_varnames, unobserved_shapes = _get_scalar_loglikelihood_functions(model)
         l = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
         pool = InitialisedInterruptiblePool(threads, l)
         fn = dummy_function
+        sampler = emcee.EnsembleSampler(nwalker_multiple * dim, dim, fn, pool=pool, **kwargs)
     elif mpi_pool is not None:
         pool = mpi_pool
         f, sup_f, unobserved_varnames, unobserved_shapes = _get_scalar_loglikelihood_functions(model)
@@ -91,12 +93,14 @@ def export_to_emcee(model=None, nwalker_multiple=2, threads=1, use_pool=False, m
         if not pool.is_master():
             print(pool.rank, "ready for function input")
         fn = dummy_function
+        with pool:
+            pool.wait()  # make the master process initialise the backend first, then the others don't need to (no race condition)
+            sampler = emcee.EnsembleSampler(nwalker_multiple * dim, dim, fn, pool=pool, **kwargs)
     else:
         f, sup_f, unobserved_varnames, unobserved_shapes = _get_scalar_loglikelihood_functions(model)
         fn = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
+        sampler = emcee.EnsembleSampler(nwalker_multiple * dim, dim, fn, pool=pool, **kwargs)
 
-    dim = sum(var.dsize for var in model.vars)
-    sampler = emcee.EnsembleSampler(nwalker_multiple*dim, dim, fn, pool=pool, **kwargs)
     backwards_compatible(sampler)
     sampler.model = model
     sampler.unobserved_varnames = unobserved_varnames

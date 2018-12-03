@@ -7,6 +7,7 @@ import emcee
 import numpy as np
 import pymc3 as pm
 from mcmc_bridge.model import array2point
+from mcmc_bridge.__version__ import __version__
 from pymc3.backends import NDArray
 from pymc3.backends.base import MultiTrace, BaseTrace
 from emcee.backends import HDFBackend
@@ -16,7 +17,7 @@ from pymc3.blocking import VarMap, ArrayOrdering
 __all__ = ['EmceeTrace']
 
 
-class Pymc3EmceeHDFBackend(HDFBackend):
+class Pymc3EmceeHDF5Backend(HDFBackend):
     """A backend that stores the chain in an HDF5 file using h5py
 
     .. note:: You must install `h5py <http://www.h5py.org/>`_ to use this

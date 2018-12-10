@@ -167,12 +167,14 @@ def metropolis_start_points(n, sd, tune=100, scaling=0.001, seed=None, model=Non
         s.proposal_dist.s = sd
     trace = pm.sample(n, step=step, cores=1, chains=1, tune=tune, random_seed=seed, **kwargs)
     array = trace2array(trace, pm.modelcontext(model))
-    good = np.isfinite(trace.accept).all(axis=1)
     if seed is not None:
         np.random.seed(seed)
-    chosen = np.random.choice(len(good), size=n)
-    array = array[good][chosen]
-    assert array.shape[0] == n, "Metropolis didn't sample enough good values {}/{}".format(good.sum(), len(trace))
+    ## commented because accept is just np.exp(log_accept) which becomes inf if the difference is sufficiently large
+    ## the metropolis uses the log_accept so it shouldn't matter that we ignore accept
+    # good = np.isfinite(trace.accept).all(axis=1)
+    # chosen = np.random.choice(len(good), size=n)
+    # array = array[good][chosen]
+    # assert array.shape[0] == n, "Metropolis didn't sample enough good values {}/{}".format(good.sum(), len(trace))
     return array
 
 def nuts_start_points(n, init, model=None, **kwargs):

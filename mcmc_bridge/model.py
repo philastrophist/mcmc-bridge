@@ -39,22 +39,30 @@ def _get_scalar_loglikelihood_functions(model, vars=None):
     f = theano.function([inarray0], logp0)
     f.trust_input = True
 
-    unobserved = list(set(model.unobserved_RVs) - set(model.vars))
-    supplementary_fn = model.fastfn(unobserved)
+    named_vars = [i for i in model.vars]
+    names = [i.name for i in named_vars]
+
+    # for predictable ordering
+    other_names, other_named_vars = zip(*[v for v in model.named_vars.items() if v[0] not in names])
+    names += other_names
+    named_vars += other_named_vars
+
+    supplementary_fn = model.fastfn(named_vars)
     with model:
         shapes = [v.shape for v in supplementary_fn(model.test_point)]
+        dtypes = [v.dtype for v in supplementary_fn(model.test_point)]
 
-    return f, supplementary_fn, [u.name for u in unobserved], shapes
+    supplementary_spec = [(name, dtype, shape) for name, dtype, shape in zip(names, dtypes, shapes)]
+    return f, supplementary_fn, supplementary_spec
 
 
 def lnpost(theta, likelihood_fn, supplementary_fn, nans='-inf'):
     assert nans == '-inf' or nans == 'raise', "nans must be either 'raise' or '-inf'"
     v = likelihood_fn(theta)
-    supplementary = supplementary_fn(array2point(theta))
-    supplementary = np.concatenate([i.ravel() for i in supplementary])
+    supplementary = tuple(supplementary_fn(array2point(theta)))
     if nans == '-inf' and np.isnan(v):
-        return -np.inf,  supplementary
-    return v, supplementary
+        v = -np.inf
+    return (v, ) + supplementary
 
 
 def dummy_function(*args, **kwargs):
@@ -80,14 +88,14 @@ def export_to_emcee(model=None, nwalker_multiple=2, threads=1, use_pool=False, m
     dim = sum(var.dsize for var in model.vars)
 
     if (use_pool and (threads > 1)):
-        f, sup_f, unobserved_varnames, unobserved_shapes = _get_scalar_loglikelihood_functions(model)
+        f, sup_f, sup_spec = _get_scalar_loglikelihood_functions(model)
         l = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
         pool = InitialisedInterruptiblePool(threads, l)
         fn = dummy_function
-        sampler = emcee.EnsembleSampler(nwalker_multiple * dim, dim, fn, pool=pool, **kwargs)
+        sampler = emcee.EnsembleSampler(nwalker_multiple * dim, dim, fn, pool=pool, blobs_dtype=sup_spec, **kwargs)
     elif mpi_pool is not None:
         pool = mpi_pool
-        f, sup_f, unobserved_varnames, unobserved_shapes = _get_scalar_loglikelihood_functions(model)
+        f, sup_f, sup_spec = _get_scalar_loglikelihood_functions(model)
         l = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
         pool.worker_function = l
         if not pool.is_master():
@@ -95,17 +103,13 @@ def export_to_emcee(model=None, nwalker_multiple=2, threads=1, use_pool=False, m
         fn = dummy_function
         with pool:
             pool.wait()  # make the master process initialise the backend first, then the others don't need to (no race condition)
-            sampler = emcee.EnsembleSampler(nwalker_multiple * dim, dim, fn, pool=pool, **kwargs)
+            sampler = emcee.EnsembleSampler(nwalker_multiple * dim, dim, fn, pool=pool, blobs_dtype=sup_spec, **kwargs)
     else:
-        f, sup_f, unobserved_varnames, unobserved_shapes = _get_scalar_loglikelihood_functions(model)
+        f, sup_f, sup_spec = _get_scalar_loglikelihood_functions(model)
         fn = partial(lnpost, likelihood_fn=f, supplementary_fn=sup_f)
-        sampler = emcee.EnsembleSampler(nwalker_multiple * dim, dim, fn, pool=pool, **kwargs)
+        sampler = emcee.EnsembleSampler(nwalker_multiple * dim, dim, fn, pool=pool, blobs_dtype=sup_spec, **kwargs)
 
     backwards_compatible(sampler)
-    sampler.model = model
-    sampler.unobserved_varnames = unobserved_varnames
-    sampler.ordering = pm.ArrayOrdering(model.vars)
-    sampler.unobserved_varshapes = unobserved_shapes
     return sampler
 
 

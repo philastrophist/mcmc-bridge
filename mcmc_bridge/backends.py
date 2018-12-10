@@ -1,79 +1,174 @@
-from _warnings import warn
 from functools import reduce
 
-import h5py
-
 import emcee
+import h5py
 import numpy as np
-import pymc3 as pm
-from mcmc_bridge.model import array2point
+from emcee.backends import HDFBackend
+from mcmc_bridge.__version__ import __version__
 from pymc3.backends import NDArray
-from pymc3.backends.base import MultiTrace
-
-from pymc3.blocking import VarMap, ArrayOrdering
+from pymc3.backends.base import MultiTrace, BaseTrace
+from functools import wraps
 
 __all__ = ['EmceeTrace']
 
 
-# TODO: clean up this mess!
-
-class HDFCompatibleArrayOrdering(ArrayOrdering):
-    def to_hdf(self, group):
-        for v in self.vmap:
-            vargroup = group.create_group(v.var)
-            vargroup.create_dataset('dshape', data=np.asarray(v.shp))
-            vargroup.attrs['dtype'] = u'{}'.format(v.dtyp)
-            vargroup.create_dataset('slc', data=np.asarray([v.slc.start, v.slc.stop]))
-
-    @classmethod
-    def from_hdf(cls, group):
-        ordering = cls([])
-        for varname, vargroup in group.items():
-            dshape = tuple(vargroup['dshape'][:].tolist())
-            dtype = vargroup.attrs['dtype']
-            slc = slice(*vargroup['slc'])
-            vmap = VarMap(varname, slc, dshape, dtype)
-            ordering.vmap.append(vmap)
-            ordering.by_name[varname] = vmap
-
-        ordering.vmap.sort(key=lambda x: x.slc.start)
-        if len(ordering.vmap):
-            ordering.size = slc.stop
-        return ordering
+class SWMRHDFBackend(HDFBackend):
+    def open(self, mode="r"):
+        if self.read_only and mode != "r":
+            raise RuntimeError("The backend has been loaded in read-only "
+                               "mode. Set `read_only = False` to make "
+                               "changes.")
+        return h5py.File(self.filename, mode, swmr=True)
 
 
-class Pymc3EmceeHDF5Backend(emcee.backends.HDFBackend):
-    def __init__(self, filename, name="mcmc", read_only=False):
-        super(Pymc3EmceeHDF5Backend, self).__init__(filename, name, read_only)
-        if self.initialized:
-            with self.open('r') as f:
-                group = f['model']
-                self.unobserved_varnames = group.attrs['unobserved_varnames'].split('|')
-                self.unobserved_varshapes = [tuple(group['unobserved_varshapes'][k]) for k in self.unobserved_varnames]
-                self.ordering = HDFCompatibleArrayOrdering.from_hdf(group['ordering'])
-        else:
-            self.unobserved_varnames = None
-            self.unobserved_varshapes = None
-            self.ordering = None
 
+class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
+    """A backend that stores the chain in an HDF5 file using h5py
+
+    .. note:: You must install `h5py <http://www.h5py.org/>`_ to use this
+        backend.
+
+    Args:
+        filename (str): The name of the HDF5 file where the chain will be
+            saved.
+        name (str; optional): The name of the group where the chain will
+            be saved.
+        read_only (bool; optional): If ``True``, the backend will throw a
+            ``RuntimeError`` if the file is opened with write access.
+
+    """
     def reset(self, nwalkers, ndim):
-        super().reset(nwalkers, ndim)
-        model = pm.modelcontext(None)
+        """Clear the state of the chain and empty the backend
 
-        unobserved = list(set(model.unobserved_RVs) - set(model.vars))
-        supplementary_fn = model.fastfn(unobserved)
-        with model:
-            unobserved_shapes = [v.shape for v in supplementary_fn(model.test_point)]
-        unobserved_varnames = [i.name for i in unobserved]
+        Args:
+            nwakers (int): The size of the ensemble
+            ndim (int): The number of dimensions
 
-        with self.open('a') as f:
-            group = f.create_group('model')
-            group.attrs['unobserved_varnames'] = u'|'.join(unobserved_varnames)
-            unobserved_varshapes = group.create_group('unobserved_varshapes')
-            for name, shape in zip(unobserved_varnames, unobserved_shapes):
-                unobserved_varshapes.create_dataset(name, data=np.asarray(shape))
-            ordering = group.create_group('ordering')
-            HDFCompatibleArrayOrdering(model.vars).to_hdf(group=ordering)
+        """
+        with self.open("w") as f:
+            g = f.create_group(self.name)
+            g.attrs["version"] = __version__
+            g.attrs["nwalkers"] = nwalkers
+            g.attrs["ndim"] = ndim
+            g.attrs["has_blobs"] = False
+            g.attrs["iteration"] = 0
+            g.create_dataset("accepted", data=np.zeros(nwalkers))
+            g.create_dataset("chain",
+                             (0, nwalkers, ndim),
+                             maxshape=(None, nwalkers, ndim),
+                             dtype=np.float64)
+            g.create_dataset("log_prob",
+                             (0, nwalkers),
+                             maxshape=(None, nwalkers),
+                             dtype=np.float64)
+
+    def has_blobs(self):
+        with self.open() as f:
+            return f[self.name].attrs["has_blobs"]
+
+    def get_value(self, name, flat=False, thin=1, discard=0):
+        if not self.initialized:
+            raise AttributeError("You must run the sampler with "
+                                 "'store == True' before accessing the "
+                                 "results")
+        with self.open() as f:
+            g = f[self.name]
+            iteration = g.attrs["iteration"]
+            if iteration <= 0:
+                raise AttributeError("You must run the sampler with "
+                                     "'store == True' before accessing the "
+                                     "results")
+
+            if name == "blobs" and not g.attrs["has_blobs"]:
+                return None
+
+            v = g[name][discard + thin - 1:self.iteration:thin]
+            if flat:
+                s = list(v.shape[1:])
+                s[0] = np.prod(v.shape[:2])
+                return v.reshape(s)
+            return v
+
+    @property
+    def shape(self):
+        with self.open() as f:
+            g = f[self.name]
+            return g.attrs["nwalkers"], g.attrs["ndim"]
+
+    @property
+    def iteration(self):
+        with self.open() as f:
+            return f[self.name].attrs["iteration"]
+
+    @property
+    def accepted(self):
+        with self.open() as f:
+            return f[self.name]["accepted"][...]
+
+    @property
+    def random_state(self):
+        with self.open() as f:
+            elements = [
+                v
+                for k, v in sorted(f[self.name].attrs.items())
+                if k.startswith("random_state_")
+            ]
+        return elements if len(elements) else None
+
+    def grow(self, ngrow, blobs):
+        """Expand the storage space by some number of samples
+
+        Args:
+            ngrow (int): The number of steps to grow the chain.
+            blobs: The current list of blobs. This is used to compute the
+                dtype for the blobs array.
+
+        """
+        self._check_blobs(blobs)
+
+        with self.open("a") as f:
+            g = f[self.name]
+            ntot = g.attrs["iteration"] + ngrow
+            g["chain"].resize(ntot, axis=0)
+            g["log_prob"].resize(ntot, axis=0)
+            if blobs is not None:
+                has_blobs = g.attrs["has_blobs"]
+                if not has_blobs:
+                    nwalkers = g.attrs["nwalkers"]
+                    dt = np.dtype((blobs[0].dtype, blobs[0].shape))
+                    g.create_dataset("blobs", (ntot, nwalkers),
+                                     maxshape=(None, nwalkers),
+                                     dtype=dt)
+                else:
+                    g["blobs"].resize(ntot, axis=0)
+                g.attrs["has_blobs"] = True
+
+    def save_step(self, state, accepted):
+        """Save a step to the backend
+
+        Args:
+        state (State): The :class:`State` of the ensemble.
+            accepted (ndarray): An array of boolean flags indicating whether
+                or not the proposal for each walker was accepted.
+
+        """
+        self._check(state, accepted)
+
+        with self.open("a") as f:
+            g = f[self.name]
+            iteration = g.attrs["iteration"]
+
+            g["chain"][iteration, :, :] = state.coords
+            g["log_prob"][iteration, :] = state.log_prob
+            if state.blobs is not None:
+                g["blobs"][iteration, :] = state.blobs
+            g["accepted"][:] += accepted
+
+            for i, v in enumerate(state.random_state):
+                g.attrs["random_state_{0}".format(i)] = v
+
+            g.attrs["iteration"] = iteration + 1
+
 
 
 
@@ -82,8 +177,6 @@ class Indexer(object):
         self.walker_trace = walker_trace
         self.emcee_backend = walker_trace.backend
         self.chain = walker_trace.chain
-        self.unfitted_chain = walker_trace.parent_multitrace.unfitted_chain
-        self.ordering = self.emcee_backend.ordering
         self.indices = self.walker_trace.indices
 
     def __getitem__(self, item):
@@ -94,15 +187,11 @@ class Indexer(object):
             _slice = slice(None)
 
         index = self.indices[_slice]
-        with self.emcee_backend.open('r') as f:
-            try:
-                varmap = self.ordering[varname]
-                samples = f[self.emcee_backend.name]['chain'][index, self.chain, varmap.slc]
-                return samples.reshape(samples.shape[:1]+varmap.shp).astype(varmap.dtyp)
-            except KeyError:
-                dslice, dshape = self.unfitted_chain[varname]
-                a = f[self.emcee_backend.name]['blobs'][index, self.chain][:, dslice]
-                return a.reshape(a.shape[:1] + dshape[1:])
+        try:
+            with self.emcee_backend.open('r') as f:
+                return f[self.emcee_backend.name]['blobs'][index, self.chain][varname]
+        except AttributeError:
+            return self.emcee_backend.get_blobs()[index, self.chain][varname]
 
 
 class EmceeWalkerTrace(NDArray):
@@ -112,10 +201,10 @@ class EmceeWalkerTrace(NDArray):
         self.parent_multitrace = parent_multitrace
 
         try:
-            super(EmceeWalkerTrace, self).__init__(name, model, None, None)
+            BaseTrace.__init__(self, name, model, None, None)
         except TypeError:
             self.model = None
-            self.varnames = self.backend.unobserved_varnames + list(self.backend.ordering.by_name.keys())
+            self.varnames = self.parent_multitrace.varnames
             self.fn = None
             self.vars = None
 
@@ -149,7 +238,6 @@ class EmceeWalkerTrace(NDArray):
     def record(self, point, sampler_stats=None):
         raise NotImplemented("Emcee chains cannot be written to by pymc3")
 
-
     def close(self):
         raise NotImplemented("Emcee chains cannot be written to by pymc3")
 
@@ -172,33 +260,18 @@ class EmceeWalkerTrace(NDArray):
         return {v: self.samples[v, int(idx)] for v in self.varnames}
 
 
-def unpack_param_blobs(backend):
-    params = {}
-    previous_size = 0
-    for varname, varshape in zip(backend.unobserved_varnames, backend.unobserved_varshapes):
-        size = np.product(varshape, dtype=int)
-        with backend.open('r') as f:
-            if len(backend.unobserved_varnames) == 1:
-                sl = Ellipsis
-            else:
-                sl = slice(previous_size, previous_size + size)
-            params[varname] = (sl, (backend.iteration, )+varshape)
-        previous_size += size
-    return params
-
 
 class EmceeTrace(MultiTrace):
     def __init__(self, backend):
         if isinstance(backend, emcee.EnsembleSampler):
             backend = backend.backend
         self.backend = backend
-        self.unfitted_chain = unpack_param_blobs(backend)
         traces = [EmceeWalkerTrace(self, i) for i in range(backend.shape[0])]
         super(EmceeTrace, self).__init__(traces)
 
     @property
     def varnames(self):
-        return self.backend.unobserved_varnames + list(self.backend.ordering.by_name.keys())
+        return self.backend.get_last_sample().blobs[0].dtype.names
 
     @property
     def stat_names(self):
@@ -207,3 +280,6 @@ class EmceeTrace(MultiTrace):
     def get_values(self, varname, burn=0, thin=1, combine=True, chains=None, squeeze=True):
         return np.asarray(super().get_values(varname, burn, thin, combine, chains, squeeze))
 
+
+# TODO: Make it so EmceeTrace only reads the variable shape/dtype once for all walkers; no need for them all to do it
+# TODO: h5py with optional parallel MPI writer/

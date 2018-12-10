@@ -1,23 +1,28 @@
-from _warnings import warn
 from functools import reduce
 
-import h5py
-
 import emcee
+import h5py
 import numpy as np
-import pymc3 as pm
-from mcmc_bridge.model import array2point
+from emcee.backends import HDFBackend
 from mcmc_bridge.__version__ import __version__
 from pymc3.backends import NDArray
 from pymc3.backends.base import MultiTrace, BaseTrace
-from emcee.backends import HDFBackend
-
-from pymc3.blocking import VarMap, ArrayOrdering
+from functools import wraps
 
 __all__ = ['EmceeTrace']
 
 
-class Pymc3EmceeHDF5Backend(HDFBackend):
+class SWMRHDFBackend(HDFBackend):
+    def open(self, mode="r"):
+        if self.read_only and mode != "r":
+            raise RuntimeError("The backend has been loaded in read-only "
+                               "mode. Set `read_only = False` to make "
+                               "changes.")
+        return h5py.File(self.filename, mode, swmr=True)
+
+
+
+class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
     """A backend that stores the chain in an HDF5 file using h5py
 
     .. note:: You must install `h5py <http://www.h5py.org/>`_ to use this
@@ -275,3 +280,6 @@ class EmceeTrace(MultiTrace):
     def get_values(self, varname, burn=0, thin=1, combine=True, chains=None, squeeze=True):
         return np.asarray(super().get_values(varname, burn, thin, combine, chains, squeeze))
 
+
+# TODO: Make it so EmceeTrace only reads the variable shape/dtype once for all walkers; no need for them all to do it
+# TODO: h5py with optional parallel MPI writer/

@@ -1,3 +1,4 @@
+import warnings
 from functools import reduce
 
 import emcee
@@ -66,11 +67,16 @@ class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
         with self.open() as f:
             return f[self.name].attrs["has_blobs"]
 
-    def get_value(self, name, flat=False, thin=1, discard=0):
+    def get_value(self, name, flat=False, thin=1, discard=0, chain_slc=None, step_slc=None, squeeze=True):
         if not self.initialized:
             raise AttributeError("You must run the sampler with "
                                  "'store == True' before accessing the "
                                  "results")
+        if chain_slc is None:
+            chain_slc = slice(None)
+        if step_slc is None:
+            step_slc = slice(discard+thin-1, self.iteration, thin)
+
         with self.open() as f:
             g = f[self.name]
             iteration = g.attrs["iteration"]
@@ -79,15 +85,39 @@ class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
                                      "'store == True' before accessing the "
                                      "results")
 
-            if name == "blobs" and not g.attrs["has_blobs"]:
-                return None
-
-            v = g[name][discard + thin - 1:self.iteration:thin]
+            if name == "blobs":
+                if not g.attrs["has_blobs"]:
+                    return None
+                dtypes = [(name, f[name][k].dtype, f[name].shape[2:]) for k in g[name].keys()]
+                data = [g[name][i][step_slc, chain_slc] for i in g[name].keys()]
+                v = np.array(data, dtype=dtypes)
+            else:
+                v = g[name][step_slc, chain_slc]
             if flat:
-                s = list(v.shape[1:])
-                s[0] = np.prod(v.shape[:2])
-                return v.reshape(s)
+                v = np.reshape(v, (-1,) + v.shape[2:])
+            if squeeze:
+                if v.shape[0] == 1:
+                    return v[0]
             return v
+
+    def get_blobs(self, name=None, **kwargs):
+        """Get the chain of blobs for each sample in the chain
+
+        Args:
+            flat (Optional[bool]): Flatten the chain across the ensemble.
+                (default: ``False``)
+            thin (Optional[int]): Take only every ``thin`` steps from the
+                chain. (default: ``1``)
+            discard (Optional[int]): Discard the first ``discard`` steps in
+                the chain as burn-in. (default: ``0``)
+
+        Returns:
+            array[..., nwalkers]: The chain of blobs.
+
+        """
+        if name is None:
+            name = ""
+        return self.get_value("blobs/"+name, **kwargs)
 
     @property
     def shape(self):
@@ -133,14 +163,16 @@ class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
             g["log_prob"].resize(ntot, axis=0)
             if blobs is not None:
                 has_blobs = g.attrs["has_blobs"]
+                dt = np.dtype((blobs[0].dtype, blobs[0].shape))
                 if not has_blobs:
+                    g.create_group("blobs")
                     nwalkers = g.attrs["nwalkers"]
-                    dt = np.dtype((blobs[0].dtype, blobs[0].shape))
-                    g.create_dataset("blobs", (ntot, nwalkers),
-                                     maxshape=(None, nwalkers),
-                                     dtype=dt)
+                    for name in dt.names:
+                        dtype, shape = dt[name].subdtype
+                        g.create_dataset(name, shape=(ntot, nwalkers) + shape, dtype=dtype, maxshape=(None, nwalkers) + shape)
                 else:
-                    g["blobs"].resize(ntot, axis=0)
+                    for name in dt.names:
+                        g["blobs"][name].resize(ntot, axis=0)
                 g.attrs["has_blobs"] = True
 
     def save_step(self, state, accepted):
@@ -161,7 +193,8 @@ class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
             g["chain"][iteration, :, :] = state.coords
             g["log_prob"][iteration, :] = state.log_prob
             if state.blobs is not None:
-                g["blobs"][iteration, :] = state.blobs
+                for name in state.blobs.names:
+                    g["blobs"][name][iteration, ...] = state.blobs[name]
             g["accepted"][:] += accepted
 
             for i, v in enumerate(state.random_state):
@@ -170,115 +203,56 @@ class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
             g.attrs["iteration"] = iteration + 1
 
 
-
-
-class Indexer(object):
-    def __init__(self, walker_trace):
-        self.walker_trace = walker_trace
-        self.emcee_backend = walker_trace.backend
-        self.chain = walker_trace.chain
-        self.indices = self.walker_trace.indices
-
-    def __getitem__(self, item):
-        if isinstance(item, tuple):
-            varname, _slice = item
-        else:
-            varname = item
-            _slice = slice(None)
-
-        index = self.indices[_slice]
-        try:
-            with self.emcee_backend.open('r') as f:
-                return f[self.emcee_backend.name]['blobs'][index, self.chain][varname]
-        except AttributeError:
-            return self.emcee_backend.get_blobs()[index, self.chain][varname]
-
-
-class EmceeWalkerTrace(NDArray):
-    def __init__(self, parent_multitrace, chain, name=None, model=None):
-        self.name = name
-        self.backend = parent_multitrace.backend
-        self.parent_multitrace = parent_multitrace
-
-        try:
-            BaseTrace.__init__(self, name, model, None, None)
-        except TypeError:
-            self.model = None
-            self.varnames = self.parent_multitrace.varnames
-            self.fn = None
-            self.vars = None
-
-        self.chain = chain
-        self._is_base_setup = True
-        self.sampler_vars = None
-        self._warnings = []
-
-        self.idxs = [slice(None)]
-        self.draws = self.draw_idx
-        self._stats = None
-
-    @property
-    def indices(self):
-        return reduce(lambda x, y: x[y], self.idxs, range(self.backend.iteration))
-
-
-    @property
-    def draw_idx(self):
-        return len(self.indices)
-
-    @property
-    def samples(self):
-        return Indexer(self)  # pretend to be a point dictionary
-
-
-    def setup(self, draws, chain, sampler_vars=None):
-        raise NotImplemented("Emcee chains are already setup")
-
-
-    def record(self, point, sampler_stats=None):
-        raise NotImplemented("Emcee chains cannot be written to by pymc3")
-
-    def close(self):
-        raise NotImplemented("Emcee chains cannot be written to by pymc3")
-
-    def get_values(self, varname, burn=0, thin=1):
-        return self.samples[varname, burn::thin]
-
-    def _slice(self, idx):
-        # Slicing directly instead of using _slice_as_ndarray to
-        # support stop value in slice (which is needed by
-        # iter_sample).
-
-        # Only the first `draw_idx` value are valid because of preallocation
-        idx = slice(*idx.indices(len(self)))
-
-        sliced = EmceeWalkerTrace(self.parent_multitrace, self.chain, name=self.name, model=self.model)
-        sliced.idxs.append(idx)
-        return sliced
-
-    def point(self, idx):
-        return {v: self.samples[v, int(idx)] for v in self.varnames}
-
-
-
 class EmceeTrace(MultiTrace):
     def __init__(self, backend):
+        super(EmceeTrace, self).__init__([])
         if isinstance(backend, emcee.EnsembleSampler):
             backend = backend.backend
+        assert isinstance(backend, Pymc3EmceeHDF5Backend)
         self.backend = backend
-        traces = [EmceeWalkerTrace(self, i) for i in range(backend.shape[0])]
-        super(EmceeTrace, self).__init__(traces)
 
     @property
-    def varnames(self):
-        return self.backend.get_last_sample().blobs[0].dtype.names
+    def nchains(self):
+        return self.backend.nwalkers
+
+    @property
+    def chains(self):
+        return range(len(self.nchains))
+
+    def __len__(self):
+        return self.backend.iteration
 
     @property
     def stat_names(self):
         return {}
 
+    def add_values(self, vals):
+        raise AttributeError("Cannot add to Emcee")
+
+    def get_sampler_stats(self, varname, burn=0, thin=1, combine=True,
+                          chains=None, squeeze=True):
+        raise AttributeError("No stats")
+
+
+    @property
+    def varnames(self):
+        with self.backend.open('r'):
+            return list(self.backend[self.backend.name].keys())
+
     def get_values(self, varname, burn=0, thin=1, combine=True, chains=None, squeeze=True):
-        return np.asarray(super().get_values(varname, burn, thin, combine, chains, squeeze))
+        return self.backend.get_blobs(varname, discard=burn, thin=thin, flat=combine, chains=chains, squeeze=squeeze)
+
+    def point(self, idx, chain=None):
+        array = self.backend.get_blobs(step_slc=idx, chain_slc=chain)
+        return {name: array[name] for name in array.dtype.names}
+
+    def points(self, chains=None):
+        raise AttributeError("Cannot make an iterator, that defeats the point of HDF5")
+
+    def _slice(self, slice):
+        raise AttributeError("Cannot perform slice abstractly, use `get_values`")
+
+
 
 
 # TODO: Make it so EmceeTrace only reads the variable shape/dtype once for all walkers; no need for them all to do it

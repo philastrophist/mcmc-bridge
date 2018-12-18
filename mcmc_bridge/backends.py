@@ -161,18 +161,22 @@ class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
             ntot = g.attrs["iteration"] + ngrow
             g["chain"].resize(ntot, axis=0)
             g["log_prob"].resize(ntot, axis=0)
+            nwalkers = g.attrs["nwalkers"]
             if blobs is not None:
                 has_blobs = g.attrs["has_blobs"]
                 dt = np.dtype((blobs[0].dtype, blobs[0].shape))
                 if not has_blobs:
                     g.create_group("blobs")
-                    nwalkers = g.attrs["nwalkers"]
                     for name in dt.names:
-                        dtype, shape = dt[name].subdtype
-                        g.create_dataset(name, shape=(ntot, nwalkers) + shape, dtype=dtype, maxshape=(None, nwalkers) + shape)
+                        subtype = dt[name].subdtype
+                        try:
+                            dtype, shape = subtype
+                        except TypeError:
+                            dtype, shape = dt[name], tuple()
+                        g['blobs'].create_dataset(name, shape=(ntot, nwalkers) + shape, dtype=dtype, maxshape=(None, nwalkers) + shape)
                 else:
                     for name in dt.names:
-                        g["blobs"][name].resize(ntot, axis=0)
+                        g['blobs'][name].resize(ntot, axis=0)
                 g.attrs["has_blobs"] = True
 
     def save_step(self, state, accepted):
@@ -193,7 +197,7 @@ class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
             g["chain"][iteration, :, :] = state.coords
             g["log_prob"][iteration, :] = state.log_prob
             if state.blobs is not None:
-                for name in state.blobs.names:
+                for name in state.blobs.dtype.names:
                     g["blobs"][name][iteration, ...] = state.blobs[name]
             g["accepted"][:] += accepted
 
@@ -208,6 +212,8 @@ class EmceeTrace(MultiTrace):
         super(EmceeTrace, self).__init__([])
         if isinstance(backend, emcee.EnsembleSampler):
             backend = backend.backend
+        if isinstance(backend, str):
+            backend = Pymc3EmceeHDF5Backend(backend)
         assert isinstance(backend, Pymc3EmceeHDF5Backend)
         self.backend = backend
 
@@ -236,11 +242,11 @@ class EmceeTrace(MultiTrace):
 
     @property
     def varnames(self):
-        with self.backend.open('r'):
-            return list(self.backend[self.backend.name].keys())
+        with self.backend.open('r') as f:
+            return list(f[self.backend.name]['blobs'].keys())
 
     def get_values(self, varname, burn=0, thin=1, combine=True, chains=None, squeeze=True):
-        return self.backend.get_blobs(varname, discard=burn, thin=thin, flat=combine, chains=chains, squeeze=squeeze)
+        return self.backend.get_blobs(varname, discard=burn, thin=thin, flat=combine, chain_slc=chains, squeeze=squeeze)
 
     def point(self, idx, chain=None):
         array = self.backend.get_blobs(step_slc=idx, chain_slc=chain)

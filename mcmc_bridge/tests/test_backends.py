@@ -44,5 +44,8 @@ def test_pymc3_emcee_hdf_backend_shapes_names_without_model_context(temp_filenam
             shape = fn(model.test_point).shape
         assert trace[v.name].shape == (iterations * sampler.nwalkers, ) + shape
         assert trace.get_values(v.name, burn=1, thin=2, combine=True).shape == ((iterations-1) // 2 * sampler.nwalkers, ) + shape
+        assert trace.get_values(v.name, burn=1, thin=2, combine=False).shape == ((iterations-1) // 2, sampler.nwalkers, ) + shape
         assert str(trace[v.name].dtype) == v.dtype
-
+        first_sample = trace.point(0)
+        for name, value in first_sample.items():
+            np.testing.assert_array_equal(start[name], value)

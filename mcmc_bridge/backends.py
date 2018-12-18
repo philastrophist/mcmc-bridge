@@ -88,9 +88,10 @@ class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
             if name == "blobs":
                 if not g.attrs["has_blobs"]:
                     return None
-                dtypes = [(name, f[name][k].dtype, f[name].shape[2:]) for k in g[name].keys()]
+                dtypes = [(k, g[name][k].dtype, g[name][k].shape[2:]) for k in g[name].keys()]
                 data = [g[name][i][step_slc, chain_slc] for i in g[name].keys()]
                 v = np.array(data, dtype=dtypes)
+                # TODO: this fails, make sure it data can be turned into a type / record array
             else:
                 v = g[name][step_slc, chain_slc]
             if flat:
@@ -116,8 +117,10 @@ class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
 
         """
         if name is None:
-            name = ""
-        return self.get_value("blobs/"+name, **kwargs)
+            name = "blobs"
+        else:
+            name = "blobs/" + name
+        return self.get_value(name, **kwargs)
 
     @property
     def shape(self):
@@ -253,7 +256,7 @@ class EmceeTrace(MultiTrace):
         return {name: array[name] for name in array.dtype.names}
 
     def points(self, chains=None):
-        raise AttributeError("Cannot make an iterator, that defeats the point of HDF5")
+        return (self.point(i, chains) for i in range(len(self)))
 
     def _slice(self, slice):
         raise AttributeError("Cannot perform slice abstractly, use `get_values`")

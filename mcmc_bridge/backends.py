@@ -67,7 +67,7 @@ class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
         with self.open() as f:
             return f[self.name].attrs["has_blobs"]
 
-    def get_value(self, name, flat=False, thin=1, discard=0, chain_slc=None, step_slc=None, squeeze=True):
+    def get_value(self, name, flat=False, thin=1, discard=0, chain_slc=None, step_slc=None, squeeze=False):
         if not self.initialized:
             raise AttributeError("You must run the sampler with "
                                  "'store == True' before accessing the "
@@ -88,10 +88,12 @@ class Pymc3EmceeHDF5Backend(SWMRHDFBackend):
             if name == "blobs":
                 if not g.attrs["has_blobs"]:
                     return None
-                dtypes = [(k, g[name][k].dtype, g[name][k].shape[2:]) for k in g[name].keys()]
-                data = [g[name][i][step_slc, chain_slc] for i in g[name].keys()]
-                v = np.array(data, dtype=dtypes)
-                # TODO: this fails, make sure it data can be turned into a type / record array
+                blobs = g['blobs']
+                dtypes = [(k, blobs[k].dtype, blobs[k].shape[2:]) for k in blobs.keys()]
+                data = [blobs[i][step_slc, chain_slc] for i in blobs.keys()]
+                v = np.zeros(data[0].shape[:2], dtype=dtypes)
+                for dtype, datum in zip(dtypes, data):
+                    v[dtype[0]] = datum
             else:
                 v = g[name][step_slc, chain_slc]
             if flat:

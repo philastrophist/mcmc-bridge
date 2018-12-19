@@ -29,28 +29,19 @@ def get_unfitted_parameters(sampler, output_vars, model=None):
         return results
 
 
-def _get_scalar_loglikelihood_functions(model, vars=None):
+def _get_scalar_loglikelihood_functions(model):
     model = pm.modelcontext(model)
-    if vars is None:
-        vars = model.vars
+    vars = model.vars
     shared = pm.make_shared_replacements(vars, model)
     [logp0], inarray0 = pm.join_nonshared_inputs([model.logpt], vars, shared)
 
     f = theano.function([inarray0], logp0)
     f.trust_input = True
 
-    named_vars = [i for i in model.vars]
-    names = [i.name for i in named_vars]
-
-    # for predictable ordering
-    other_names, other_named_vars = zip(*[v for v in model.named_vars.items() if v[0] not in names])
-    names += other_names
-    named_vars += other_named_vars
-
-    supplementary_fn = model.fastfn(named_vars)
+    names, tensors = zip(*model.named_vars.items())
+    supplementary_fn = model.fastfn(tensors)
     with model:
-        shapes = [v.shape for v in supplementary_fn(model.test_point)]
-        dtypes = [v.dtype for v in supplementary_fn(model.test_point)]
+        shapes, dtypes = zip(*[(value.shape, value.dtype) for value in supplementary_fn(model.test_point)])
 
     supplementary_spec = [(name, dtype, shape) for name, dtype, shape in zip(names, dtypes, shapes)]
     return f, supplementary_fn, supplementary_spec
@@ -59,10 +50,11 @@ def _get_scalar_loglikelihood_functions(model, vars=None):
 def lnpost(theta, likelihood_fn, supplementary_fn, nans='-inf'):
     assert nans == '-inf' or nans == 'raise', "nans must be either 'raise' or '-inf'"
     v = likelihood_fn(theta)
-    supplementary = tuple(supplementary_fn(array2point(theta)))
+    in_point = array2point(theta)
+    supplementary = tuple(supplementary_fn(in_point))
     if nans == '-inf' and np.isnan(v):
         v = -np.inf
-    return (v, ) + supplementary
+    return (float(v), ) + supplementary
 
 
 def dummy_function(*args, **kwargs):
